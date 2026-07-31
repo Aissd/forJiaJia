@@ -1,5 +1,5 @@
 
 文字内容
-[img:许愿嘉.jfif]
+[img:xxx.jfif]
 文字
-[video:许愿嘉.mp4]
+[video:xxx.mp4]
