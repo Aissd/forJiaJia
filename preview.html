@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>本地资源阅览器</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: system-ui, -apple-system, sans-serif;
+        }
+
+        body {
+            background: #121212;
+            color: #eee;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* 首页 */
+        #homePage {
+            padding: 40px 20px;
+            max-width: 720px;
+            margin: 0 auto;
+        }
+
+        .title {
+            font-size: 26px;
+            text-align: center;
+            margin-bottom: 30px;
+            color: #fff;
+        }
+
+        .folder-list {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        .folder-item {
+            background: #1e1e1e;
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 18px 22px;
+            font-size: 18px;
+            cursor: pointer;
+            transition: 0.25s ease;
+        }
+
+        .folder-item:active {
+            background: #2d2d2d;
+            transform: scale(0.98);
+        }
+
+        /* 全屏阅览面板 */
+        #viewerPanel {
+            position: fixed;
+            inset: 0;
+            background: #0a0a0a;
+            display: none;
+            overflow-y: auto;
+            padding: 50px 16px 80px;
+        }
+
+        .close-btn {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            width: 44px;
+            height: 44px;
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(4px);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            color: white;
+            cursor: pointer;
+            z-index: 999;
+        }
+
+        .close-btn:hover {
+            background: rgba(255, 255, 255, 0.25);
+        }
+
+        /* 音频控制器 */
+        .audio-control {
+            position: fixed;
+            bottom: 18px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 255, 255, 0.12);
+            padding: 10px 16px;
+            border-radius: 30px;
+            display: none;
+            gap: 12px;
+            align-items: center;
+            z-index: 998;
+        }
+
+        .audio-control button {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        /* 内容容器 */
+        .content-wrap {
+            max-width: 680px;
+            margin: 0 auto;
+        }
+        /* 阅览页标题样式 */
+        .article-head-title {
+            font-size: 26px;
+            text-align: center;
+            color:#ffffff;
+            margin-bottom:32px;
+            font-weight: 600;
+        }
+
+        .paragraph-text {
+            font-size: 17px;
+            line-height: 1.9;
+            color: #e2e2e2;
+            margin: 12px 0;
+            white-space: pre-wrap;
+            word-break: break-word;
+            overflow-wrap: break-word;
+        }
+
+        .media-img {
+            width: 100%;
+            max-width: 100%;
+            height: auto;
+            border-radius: 10px;
+            margin: 24px 0;
+            display: block;
+        }
+
+        .media-video {
+            width: 100%;
+            max-width: 100%;
+            height: auto;
+            border-radius: 10px;
+            margin: 24px 0;
+            display: block;
+        }
+
+        .error-tip {
+            color: #ff8888;
+            padding: 8px;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+    <div id="homePage">
+        <h1 class="title">资源目录</h1>
+        <div class="folder-list" id="folderList"></div>
+    </div>
+
+    <div id="viewerPanel">
+        <div class="close-btn" id="closeBtn">✕</div>
+        <div class="content-wrap" id="contentBox"></div>
+        <div class="audio-control" id="audioPanel">
+            <span>背景音乐</span>
+            <button id="audioPlay">播放</button>
+            <button id="audioPause">暂停</button>
+        </div>
+        <audio id="bgAudio" loop>
+    </div>
+
+    <script src="./config.js"></script>
+    <script>
+        const homePage = document.getElementById('homePage');
+        const viewerPanel = document.getElementById('viewerPanel');
+        const folderList = document.getElementById('folderList');
+        const contentBox = document.getElementById('contentBox');
+        const closeBtn = document.getElementById('closeBtn');
+        const bgAudio = document.getElementById('bgAudio');
+        const audioPanel = document.getElementById('audioPanel');
+        const audioPlayBtn = document.getElementById('audioPlay');
+        const audioPauseBtn = document.getElementById('audioPause');
+
+        let videoList = [];
+        let isRendering = false;
+
+        function stopAllMedia() {
+            bgAudio.pause();
+            bgAudio.currentTime = 0;
+            videoList.forEach(v => {
+                v.pause();
+                v.currentTime = 0;
+            });
+            videoList = [];
+        }
+
+        function backHome() {
+            stopAllMedia();
+            isRendering = false;
+            viewerPanel.style.display = 'none';
+            homePage.style.display = 'block';
+            audioPanel.style.display = 'none';
+        }
+
+        function renderHome() {
+            folderList.innerHTML = '';
+            folderData.forEach((item, idx) => {
+                const div = document.createElement('div');
+                div.className = 'folder-item';
+                div.innerText = item.folderName;
+                div.onclick = () => {
+                    if (isRendering) return;
+                    openFolder(idx);
+                };
+                folderList.appendChild(div);
+            });
+        }
+
+        //解析txt内 [img:] [video:] 标记
+        function parseTextMark(text) {
+            const segments = [];
+            const reg = /\[((?:img|video):.+?)\]/g;
+            let lastIndex = 0;
+            let match;
+            while ((match = reg.exec(text)) !== null) {
+                const prefixText = text.slice(lastIndex, match.index);
+                if (prefixText.trim() !== '') {
+                    segments.push({ type: 'text', content: prefixText });
+                }
+                const tagStr = match[1];
+                const [mediaType, src] = tagStr.split(':');
+                segments.push({ type: mediaType, src: src });
+                lastIndex = reg.lastIndex;
+            }
+            const tailText = text.slice(lastIndex);
+            if (tailText.trim() !== '') {
+                segments.push({ type: 'text', content: tailText });
+            }
+            return segments;
+        }
+
+        //渲染图文分段
+        function renderSegments(container, segments, basePath) {
+            segments.forEach(seg => {
+                if (seg.type === 'text') {
+                    const div = document.createElement('div');
+                    div.className = 'paragraph-text';
+                    div.innerText = seg.content;
+                    container.appendChild(div);
+                } else if (seg.type === 'img') {
+                    const img = document.createElement('img');
+                    img.className = 'media-img';
+                    img.src = basePath + seg.src;
+                    container.appendChild(img);
+                } else if (seg.type === 'video') {
+                    const video = document.createElement('video');
+                    video.className = 'media-video';
+                    video.controls = true;
+                    video.loop = true;
+                    video.muted = true;
+                    video.src = basePath + seg.src;
+                    container.appendChild(video);
+                    videoList.push(video);
+                    video.play().catch(() => {});
+                }
+            });
+        }
+
+        async function openFolder(index) {
+            if (isRendering) return;
+            isRendering = true;
+
+            const data = folderData[index];
+            stopAllMedia();
+            contentBox.innerHTML = '';
+            videoList = [];
+            audioPanel.style.display = 'none';
+
+            // 如果配置了标题，创建标题元素
+            if(data.title){
+                const titleDom = document.createElement('h2');
+                titleDom.className = 'article-head-title';
+                titleDom.innerText = data.title;
+                contentBox.appendChild(titleDom);
+            }
+
+            let hasAudio = false;
+            let audioSrc = '';
+            // 判断当前分组是否存在文本资源
+            const hasTextResource = data.resources.some(r => r.type === "text");
+
+            for (const res of data.resources) {
+                const fullSrc = data.path + res.src;
+                switch (res.type) {
+                    case 'audio':
+                        hasAudio = true;
+                        audioSrc = fullSrc;
+                        break;
+                    // 关键修复：存在文本资源时，跳过直接渲染image/video，防止重复
+                    case 'image':
+                    case 'video':
+                        if(hasTextResource) break;
+                        const el = res.type === "image"
+                            ? document.createElement('img')
+                            : document.createElement('video');
+                        el.className = res.type === "image" ? 'media-img' : 'media-video';
+                        el.src = fullSrc;
+                        if(res.type === "video"){
+                            el.controls = true;
+                            el.loop = true;
+                            el.muted = true;
+                            videoList.push(el);
+                            el.play().catch(() => {});
+                        }
+                        contentBox.appendChild(el);
+                        break;
+                    case 'text':
+                        try {
+                            const resp = await fetch(fullSrc);
+                            if (!resp.ok) throw new Error('文件读取失败');
+                            const rawText = await resp.text();
+                            const segList = parseTextMark(rawText);
+                            renderSegments(contentBox, segList, data.path);
+                        } catch (e) {
+                            const errDom = document.createElement('div');
+                            errDom.className = 'error-tip';
+                            errDom.innerText = `文本文件加载失败：${fullSrc}\n【提示】本地直接打开 html 会触发浏览器限制；部署 Github Pages 线上访问无此问题。`;
+                            contentBox.appendChild(errDom);
+                        }
+                        break;
+                }
+            }
+
+            if (hasAudio) {
+                bgAudio.src = audioSrc;
+                audioPanel.style.display = 'flex';
+                bgAudio.play().catch(() => {});
+            }
+
+            homePage.style.display = 'none';
+            viewerPanel.style.display = 'block';
+            isRendering = false;
+        }
+
+        audioPlayBtn.onclick = () => bgAudio.play();
+        audioPauseBtn.onclick = () => bgAudio.pause();
+        closeBtn.onclick = backHome;
+
+        renderHome();
+    </script>
+</body>
+</html>
